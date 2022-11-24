@@ -118,7 +118,7 @@ void opFunctions(bool isRequest, uint8_t data[]) {
 
     // Sinfonion
 
-    case 210:   if (isRequest) op_I2M_S_Q_T(data);         break;
+    case 210:   if (isRequest) op_I2M_S_QT(data);         break;
 
     // for development
     case 255:                  op_I2M_TEST(data);          break;
@@ -1250,7 +1250,7 @@ void op_I2M_Q_LCC(uint8_t data[]) {
 // -------------------------------------------------------------------------------------------
 // Sinfonion
 
-void op_I2M_S_Q_T(uint8_t data[]) {
+void op_I2M_S_QT(uint8_t data[]) {
   int16_t processedScaleMask;
   int transposeAmount;
   int i;
