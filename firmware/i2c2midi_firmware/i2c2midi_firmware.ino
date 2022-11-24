@@ -426,28 +426,15 @@ void loop() {
     incomingByte = Serial2.read();
     if( incomingByte & 0x80 ) {
        sinfonionBufferCount = 0;
-       Serial.print("// Root: ");
-       Serial.print(incomingByte & 0x0f, DEC);
-       Serial.print(" // ");
        lastSinfonionRoot = incomingByte & 0x0f;
     }
     else if( sinfonionBufferCount == 1) {
-       Serial.print("Degree: ");
-       Serial.print(incomingByte & 0x0f, DEC);
-       Serial.print(" // ");
        lastSinfonionDegree = incomingByte & 0x0f;
     }
     else if( sinfonionBufferCount == 2) {
-       Serial.print("Mode: ");
-       Serial.print(incomingByte & 0x0f, DEC);
-       Serial.print(" // ");
-       
        lastSinfonionMode = incomingByte & 0x0f;
     }
     else if( sinfonionBufferCount == 3) {
-       Serial.print("Transposition: ");
-       Serial.print(incomingByte, DEC);
-       Serial.println(" // ");
        lastSinfonionTranspose = incomingByte;
     }
 
