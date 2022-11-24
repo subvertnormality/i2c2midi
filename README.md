@@ -800,6 +800,16 @@ Get the latest controller value (0..127) received via MIDI in
 
 ---
 
+### Sinfonion Syncing
+*Syncronise Teletype's quantising with Sinfonion. Uses Sinfonion's harmonic sync function. Requires customisation of your i2c2midi module*
+
+#### I2M.S.QT
+`I2M.S.QT`  
+
+Get Sinfonion's current scale and root note. Teletype then uses this to quantise a v/octave value.
+
+---
+
 ### Channel-specific OP variants
 *Use the same OP but specify the channel within the OP itself. Simply add `#` to the OP name and the desired channel number as the first argument. 
 This way you can easily send information to different channels, without the need to use `I2M.CH`. E.g. send three different CC messages to controller 1 on channels 1, 2 and 3:*

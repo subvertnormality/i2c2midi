@@ -116,6 +116,10 @@ void opFunctions(bool isRequest, uint8_t data[]) {
     case 134:   if (isRequest) op_I2M_Q_LC(data);          break;
     case 135:   if (isRequest) op_I2M_Q_LCC(data);         break;
 
+    // Sinfonion
+
+    case 210:   if (isRequest) op_I2M_S_QT(data);         break;
+
     // for development
     case 255:                  op_I2M_TEST(data);          break;
 
@@ -1243,6 +1247,40 @@ void op_I2M_Q_LCC(uint8_t data[]) {
   }
 }
 
+// -------------------------------------------------------------------------------------------
+// Sinfonion
+
+void op_I2M_S_QT(uint8_t data[]) {
+  int16_t processedScaleMask;
+  int transposeAmount;
+  int i;
+  
+  // Calculate the transpose
+  processedScaleMask = scaleMasks[lastSinfonionDegree][lastSinfonionMode];
+  
+  if (lastSinfonionTranspose < 64) {
+    transposeAmount = 64 - lastSinfonionTranspose;
+    for (i = 0; i < transposeAmount; i++) {
+      processedScaleMask = transpose_left(processedScaleMask);
+    }
+  } else if (lastSinfonionTranspose > 64) {
+    transposeAmount = lastSinfonionTranspose - 64;
+    for (i = 0; i < transposeAmount; i++) {
+      processedScaleMask = transpose_right(processedScaleMask);
+    }
+  }
+
+  // Send the root note
+  Wire.write(lastSinfonionRoot);
+
+  // Send the first byte of the scale mask
+  Wire.write(processedScaleMask >> 8);
+
+  // Send the second byte of the scale mask
+  Wire.write(processedScaleMask & 255);
+
+  // To recombine these in teletype, it's ((byte1 << 8) | byte2)
+}
 
 
 // -------------------------------------------------------------------------------------------
