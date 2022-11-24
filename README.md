@@ -188,6 +188,7 @@ Caution: Do not connect power from the modular and the default USB port of the T
 | get  | [I2M.Q.LO](#i2mqlo)                                   |                 |                                              | Get last MIDI in Note Off           |
 | get  | [I2M.Q.LC](#i2mqlc)                                   |                 |                                              | Get last MIDI in Controller         |
 | get  | [I2M.Q.LCC](#i2mqlcc)                                 |                 |                                              | Get last MIDI in CC Value           |
+|      | [I2M_S_QT](#i2msqt)                                   |                 |                                              | Quantise to Sinfonion key           |
 |      | [I2M.PANIC](#i2mpanic)                                |                 |                                              | Don't panic!                        |
 
 
@@ -688,6 +689,16 @@ Get the latest controller number (0..127) received via MIDI in
 `I2M.Q.LCC`  
 
 Get the latest controller value (0..127) received via MIDI in  
+
+---
+
+### Sinfonion Syncing
+*Syncronise Teletype's quantising with Sinfonion. Uses Sinfonion's harmonic sync function. Requires customisation of your i2c2midi module*
+
+#### I2M.S.QT
+`I2M.S.QT`  
+
+Get Sinfonion's current scale and root note. Teletype then uses this to quantise a v/octave value.
 
 ---
 

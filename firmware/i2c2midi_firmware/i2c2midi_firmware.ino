@@ -49,8 +49,8 @@
 //#define TEST
 
 // Set Teensy model (Teensy 3.x vs. Teensy 4.1)
-#define TEENSY3X
-//#define TEENSY41
+//#define TEENSY3X
+#define TEENSY41
 
 
 // -------------------------------------------------------------------------------------------
@@ -116,7 +116,6 @@ const uint8_t i2cAddress = 0x3F;    // official I2C address for Teletype I2M OPs
 // MIDI TRS
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial1, MIDI);  
 
- 
 
 
 // -------------------------------------------------------------------------------------------
@@ -272,14 +271,57 @@ unsigned long lastLEDMillis1 = 0;                  // last time LED 1 turned on
 unsigned long lastLEDMillis2 = 0;                  // last time LED 2 turned on
 const byte animationSpeed = 100;                   // start up animation speed
 
+// Sinfonion
 
+int lastSinfonionDegree;
+int lastSinfonionMode;
+int lastSinfonionTranspose;
+int lastSinfonionRoot;
+int sinfonionBufferCount;
 
+uint16_t scaleMasks[12][9] = {
+  {5483, 5485, 6837, 5547, 5813, 5803, 5811, 5555, 6579},
+  {5547, 5485, 5485, 5485, 5485, 6997, 6997, 5483, 4967},
+  {5549, 5557, 5813, 5805, 6869, 6829, 6861, 5837, 5837},
+  {5549, 5557, 5805, 5549, 5547, 5467, 5531, 5531, 5533},
+  {6997, 6573, 5531, 6837, 5483, 5483, 5483, 6965, 6969},
+  {6581, 6573, 5547, 5483, 5805, 5485, 5741, 5739, 5747},
+  {5805, 7021, 5549, 6997, 6997, 6997, 6997, 6997, 5351},
+  {5813, 7021, 5549, 5549, 6581, 5557, 6581, 6573, 6605},
+  {5811, 5803, 6869, 6997, 5483, 5483, 4971, 4955, 5019},
+  {6837, 5803, 5547, 5813, 6997, 5845, 6997, 5813, 5941},
+  {5851, 5467, 5549, 5483, 5549, 5549, 5549, 5483, 5741},
+  {5461, 6869, 5485, 6869, 7897, 6997, 7001, 6873, 7385}
+};
+
+  
 // -------------------------------------------------------------------------------------------
 // SETUP
 // -------------------------------------------------------------------------------------------
 
 
+uint16_t transpose_left(uint16_t x)
+{
+
+  uint16_t n = (x >> 11) & 1; 
+  uint16_t r = (x >> 12) & 1;
+  uint16_t t = (x << 5);
+
+  return ((t >> 4 | n) & ~(1UL << 12)) | (r << 12);
+}
+
+
+uint16_t transpose_right(uint16_t x)
+{
+
+  uint16_t n = (x & ( 1 << 1 )) >> 1;
+  return (((((x >> 1) & ~(1UL << 12)) | (n << 12)) & ~(1UL << 0)) | (n << 0));
+}
+
+
 void setup() {
+
+  
 
   // LEDs
   pinMode(led1,OUTPUT); 
@@ -299,6 +341,10 @@ void setup() {
 
   // serial
   Serial.begin(115200);
+
+  // Sinfonion
+  Serial2.begin(115200, SERIAL_8N1_RXINV_TXINV);
+  sinfonionBufferCount = 0;
 
   // MIDI & USB MIDI
   MIDI.begin();
@@ -344,7 +390,6 @@ void setup() {
     Serial.println("started");
   #endif
 
-
 }
 
 
@@ -354,7 +399,40 @@ void setup() {
 
 
 void loop() {
+  int incomingByte;
 
+  
+  if (Serial2.available() > 0) {
+    incomingByte = Serial2.read();
+    if( incomingByte & 0x80 ) {
+       sinfonionBufferCount = 0;
+       Serial.print("// Root: ");
+       Serial.print(incomingByte & 0x0f, DEC);
+       Serial.print(" // ");
+       lastSinfonionRoot = incomingByte & 0x0f;
+    }
+    else if( sinfonionBufferCount == 1) {
+       Serial.print("Degree: ");
+       Serial.print(incomingByte & 0x0f, DEC);
+       Serial.print(" // ");
+       lastSinfonionDegree = incomingByte & 0x0f;
+    }
+    else if( sinfonionBufferCount == 2) {
+       Serial.print("Mode: ");
+       Serial.print(incomingByte & 0x0f, DEC);
+       Serial.print(" // ");
+       
+       lastSinfonionMode = incomingByte & 0x0f;
+    }
+    else if( sinfonionBufferCount == 3) {
+       Serial.print("Transposition: ");
+       Serial.print(incomingByte, DEC);
+       Serial.println(" // ");
+       lastSinfonionTranspose = incomingByte;
+    }
+
+    sinfonionBufferCount++;
+  }
   // I2C   
   if(received) {
     #ifdef DEBUG
@@ -442,7 +520,7 @@ void loop() {
   checkBuffer();
   updateRamps();                    // update all ramps for MIDI CC 
   checkLEDs();                      // check if the LEDs should be turned off
-  
+
   #ifdef TEST
     TESTFunction();                 // function for testing
   #endif
