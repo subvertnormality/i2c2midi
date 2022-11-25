@@ -409,7 +409,6 @@ void setup() {
   #ifdef DEBUG
     Serial.println("started");
   #endif
-
 }
 
 
@@ -531,5 +530,4 @@ void loop() {
   #ifdef TEST
     TESTFunction();                 // function for testing
   #endif
-
 }
