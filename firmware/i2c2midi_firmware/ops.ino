@@ -1210,8 +1210,14 @@ void op_I2M_S_QT(uint8_t data[]) {
     }
   }
 
-  // Send the root note
-  Wire.write(lastSinfonionRoot);
+  if (lastSinfonionRoot > 0) {
+
+    for (i = 0; i < lastSinfonionRoot; i++) {
+      processedScaleMask = transpose_right(processedScaleMask);
+    }
+  }
+
+
 
   // Send the first byte of the scale mask
   Wire.write(processedScaleMask >> 8);
@@ -1219,7 +1225,6 @@ void op_I2M_S_QT(uint8_t data[]) {
   // Send the second byte of the scale mask
   Wire.write(processedScaleMask & 255);
 
-  // To recombine these in teletype, it's ((byte1 << 8) | byte2)
 }
 
 
