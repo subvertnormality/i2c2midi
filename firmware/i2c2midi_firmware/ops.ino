@@ -1195,29 +1195,14 @@ void op_I2M_S_QT(uint8_t data[]) {
   int transposeAmount;
   int i;
   
-  // Calculate the transpose
-  processedScaleMask = scaleMasks[lastSinfonionDegree][lastSinfonionMode];
+  processedScaleMask = scaleMasks[lastSinfonionDegree][lastSinfonionMode] & 0b111111111111;
   
-  if (lastSinfonionTranspose < 64) {
-    transposeAmount = 64 - lastSinfonionTranspose;
-    for (i = 0; i < transposeAmount; i++) {
-      processedScaleMask = transpose_left(processedScaleMask);
-    }
-  } else if (lastSinfonionTranspose > 64) {
-    transposeAmount = lastSinfonionTranspose - 64;
-    for (i = 0; i < transposeAmount; i++) {
+  if (lastSinfonionDegree > 0 && lastSinfonionMode > 2) {
+
+    for (i = 0; i < lastSinfonionDegree; i++) {
       processedScaleMask = transpose_right(processedScaleMask);
     }
   }
-
-  if (lastSinfonionRoot > 0) {
-
-    for (i = 0; i < lastSinfonionRoot; i++) {
-      processedScaleMask = transpose_right(processedScaleMask);
-    }
-  }
-
-
 
   // Send the first byte of the scale mask
   Wire.write(processedScaleMask >> 8);
