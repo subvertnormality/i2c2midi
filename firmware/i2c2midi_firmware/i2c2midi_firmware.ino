@@ -271,7 +271,7 @@ unsigned long lastLEDMillis1 = 0;                  // last time LED 1 turned on
 unsigned long lastLEDMillis2 = 0;                  // last time LED 2 turned on
 const byte animationSpeed = 100;                   // start up animation speed
 
-// Sinfonion xd2
+// Sinfonion
 int lastSinfonionDegree;
 int lastSinfonionMode;
 int lastSinfonionTranspose;
@@ -292,21 +292,6 @@ int16_t scaleMasks[12][9] = {
   {0b101101101101, 0b101010101101, 0b101011010110, 0b101010110101, 0b101011010110, 0b101011010110, 0b101011010110, 0b101010110101, 0b101100110110 },
   {0b101010101010, 0b110101101010, 0b101010110110, 0b110101101010, 0b111101101100, 0b110110101010, 0b110110101100, 0b110101101100, 0b111001101100 }
 };
-
-const char *int_to_binary_str(int x, int N_bits){
-    static char b[512];
-    char *p = b;
-    b[0] = '\0';
-
-    for(int i=(N_bits-1); i>=0; i--){
-      *p++ = (x & (1<<i)) ? '1' : '0';
-    }
-    return b;
-}
-
-// -------------------------------------------------------------------------------------------
-// SETUP
-// -------------------------------------------------------------------------------------------
 
 int16_t transpose_left(int16_t x)
 {
@@ -329,10 +314,14 @@ int16_t transpose_right(int16_t x)
   return ((x >> 1) & ~(1UL << 11)) | (n << 11);
 }
 
+// -------------------------------------------------------------------------------------------
+// SETUP
+// -------------------------------------------------------------------------------------------
+
+
 
 void setup() {
 
-  
 
   // LEDs
   pinMode(led1,OUTPUT); 
