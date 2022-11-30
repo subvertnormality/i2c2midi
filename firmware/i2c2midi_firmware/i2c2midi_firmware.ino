@@ -256,6 +256,7 @@ int bufferVelocityOffset = 0;                      // velocity offset added to a
 int bufferDurationOffset = 0;                      // duration offset added to all notes, fixed for all rounds
 byte bufferMode = 0;                               // buffer mode, 0 = "digital", 1 = "tape" (pitch/duration fixed to speed)
 
+
 // Ramp (slew)
 const byte maxRamps = 8;                           // maximum allowed ramps
 rampInt* myRamps = new rampInt[maxRamps];          // intialize 8 ramps 
@@ -276,6 +277,16 @@ byte lastVelocityIn = 0;                           // the last note velocity of 
 byte lastNoteOffIn = 0;                            // the last note number of Note Off message received via MIDI in  
 byte lastCIn = 0;                                  // the last controller number received via MIDI in
 byte lastCCIn = 0;                                 // the last CC value received via MIDI in
+
+byte midi_clock = 0xf8;                            // Midi clock message type
+elapsedMicros timeSinceTick;
+int beatCount;
+int beatCountAssessValue;
+bool counting = false;
+int16_t bpm = 0;
+long int noteTime;
+long int bpmAssessValue;
+long int storedTimeSinceTick;
 
 // LEDs
 const byte led1 = 3;                               // pin definition for led 1
@@ -308,11 +319,7 @@ int16_t scaleMasks[12][9] = {
 
 int16_t transpose_left(int16_t x)
 {
-  // 0000101010110101
-  // 0000000000000001 uint16_t n = (x >> 11) & 1;
-  // 0101011010100000 uint16_t t = (x << 5);
-  // 0000010101101010 t = (t >> 4);
-  
+
   int16_t n = (x >> 11) & 1;
   int16_t t = (x << 5);
   t = (t >> 4);
@@ -322,7 +329,7 @@ int16_t transpose_left(int16_t x)
 
 int16_t transpose_right(int16_t x)
 {
-  // 0000101010110101
+
   int16_t n = x & 1;
   return ((x >> 1) & ~(1UL << 11)) | (n << 11);
 }
@@ -476,8 +483,42 @@ void loop() {
 
       if (channel < 1 || channel > 16) return;
 
+      if (type == midi_clock ) {
+        if (!counting) { 
+          timeSinceTick = 0;
+          counting = true;
+          beatCount = 1;
+        }
+        else {
+          storedTimeSinceTick = timeSinceTick;
+          if (beatCount == 3) {
+            if (storedTimeSinceTick >= 100) {
+              beatCountAssessValue = 48;
+              bpmAssessValue = 120000000;
+            }
+            else if (storedTimeSinceTick >= 40 && storedTimeSinceTick < 100) {
+              beatCountAssessValue = 96;
+              bpmAssessValue = 240000000;
+            }
+            else if (storedTimeSinceTick >= 20 && storedTimeSinceTick < 40) {
+              beatCountAssessValue = 192;
+              bpmAssessValue = 480000000;
+            }
+            else {
+              beatCountAssessValue = 384;
+              bpmAssessValue = 960000000;
+            }
+          }
+          if (beatCount == beatCountAssessValue) {
+            counting = false;
+            bpm = bpmAssessValue/(timeSinceTick - 1000);
+          }
+          beatCount++;
+        }
+      }
+
       // NOTE ON (status 144-159)
-      if (type >= 144 && type <= 159) {
+      else if (type >= 144 && type <= 159) {
         int noteNumber = data1;
         if (noteNumber < 0 || noteNumber > 127) return;
         int velocity = data2;
@@ -517,7 +558,7 @@ void loop() {
       lastChannelIn = channel;                                      // store the channel as last used channel
 
       blinkLED(2);
-
+    
     }
   #endif
 
