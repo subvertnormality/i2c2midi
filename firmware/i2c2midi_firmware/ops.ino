@@ -111,10 +111,11 @@ void opFunctions(bool isRequest, uint8_t data[]) {
     case 133:   if (isRequest) op_I2M_Q_LO(data);          break;
     case 134:   if (isRequest) op_I2M_Q_LC(data);          break;
     case 135:   if (isRequest) op_I2M_Q_LCC(data);         break;
+    case 145:   if (isRequest) op_I2M_Q_BPM(data);         break;
 
     // Sinfonion
 
-    case 210:   if (isRequest) op_I2M_S_QT(data);         break;
+    case 210:   if (isRequest) op_I2M_S_QT(data);          break;
 
     // for development
     case 255:                  op_I2M_TEST(data);          break;
@@ -1185,6 +1186,17 @@ void op_I2M_Q_LCC(uint8_t data[]) {
   } else {
     Wire.write(response);
   }
+}
+
+void op_I2M_Q_BPM(uint8_t data[]) {
+  const int16_t response = bpm;
+
+  // Send the first byte of the response
+  Wire.write(response >> 8);
+
+  // Send the second byte of the response
+  Wire.write(response & 255);
+
 }
 
 // -------------------------------------------------------------------------------------------
