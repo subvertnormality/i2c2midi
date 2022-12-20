@@ -120,6 +120,7 @@ void opFunctions(bool isRequest, uint8_t data[]) {
     // Sinfonion
 
     case 210:   if (isRequest) op_I2M_S_QT(data);          break;
+    case 211:   if (isRequest) op_I2M_S_RN(data);          break;
 
     // for development
     case 255:                  op_I2M_TEST(data);          break;
@@ -1294,6 +1295,14 @@ void op_I2M_S_QT(uint8_t data[]) {
 
 }
 
+
+void op_I2M_S_RN(uint8_t data[]) {
+
+  // Send the Root Note
+  Wire.write(lastSinfonionRoot);
+
+
+}
 
 // -------------------------------------------------------------------------------------------
 // Development
