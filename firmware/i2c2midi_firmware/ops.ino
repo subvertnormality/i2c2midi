@@ -1217,7 +1217,13 @@ void op_I2M_S_QT(uint8_t data[]) {
     }
   }
                                                                                    
+  if (lastSinfonionRoot > 0) {
 
+    for (i = 0; i < lastSinfonionRoot; i++) {
+      processedScaleMask = transpose_right(processedScaleMask);
+    }
+  }
+  
   // Send the transpose amount
   Wire.write(lastSinfonionTranspose);
   
