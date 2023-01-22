@@ -1215,7 +1215,7 @@ void op_I2M_S_QT(uint8_t data[]) {
     for (i = 0; i < lastSinfonionDegree; i++) {
       processedScaleMask = transpose_right(processedScaleMask);
     }
-  }`
+  }
                                                                                    
 
   // Send the transpose amount
