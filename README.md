@@ -12,6 +12,7 @@ i2c2midi bridges the gap between [monome Teletype](https://monome.org/docs/telet
 - Automatic MIDI Note Off messages (settable note duration per note)
 - Chords and Chord Transformations
 - Looping MIDI buffer / MIDI recorder
+- Works with monome crow, too, thanks to [mreid](https://github.com/mreid/crow-i2c2midi)  
 - 8 voice polyphony per MIDI channel, 16 channels simultaneously
 - 2 HP, 42 mm depth
 
@@ -29,10 +30,12 @@ https://llllllll.co/t/i2c2midi-a-diy-module-that-translates-i2c-to-midi/
 
 ## Table of contents
 [Connections](#connections)  
+[Example Scripts](#example-scripts)  
 [Teletype OPs](#teletype-ops)   
-[Example Scripts](#example-scripts)   
+[Further Reading](#further-reading)   
 [Build the module](#build-the-module)  
 [Firmware](#firmware)  
+[crow Library](#crow-library)  
 [Thanks](#thanks)  
 [Sources](#sources)  
 
@@ -97,107 +100,237 @@ Caution: Do not connect power from the modular and the default USB port of the T
 
 ---
 
+## Example Scripts
+
+#### Play a random note
+```
+#1 
+I2M.CH 1                // set channel to 1
+I2M.N + 60 RND 24 127   // play note between 60 and 84
+```
+
+#### Play a V/Oct note using `VN`
+```
+#1
+J N.B RRND 1 15         // random note from a scale in V/Oct
+K VN J                  // convert the V/Oct value to MIDI note number
+I2M.N + 60 K 127        // play note 
+```
+
+#### Define and play a chord
+```
+#1
+I2M.C.CLR 1             // clear chord 1
+I2M.C.ADD 1 0           // add relative note 0
+I2M.C.ADD 1 3           // add relative note 3
+I2M.C.ADD 1 7           // add relative note 7
+
+#2
+I2M.C.STR 1 100         // set strumming to 100
+I2M.C.DIR 1 7           // set play direction to 7: Pingpong
+I2M.C 1 60 127          // play chord 1 with rootnote 60 and velocity 127 (= 60,63,67)
+```
+
+#### Define a chord using reverse binary
+```
+#1
+I2M.C.B 1 R10010001     // define chord: 1 means add, 0 means don't add = 0,3,7
+I2M.C 1 60 127          // play chord 1 with rootnote 60 and velocity 127 (= 60,63,67)
+```
+
+#### Play chords stored in pattern 0
+```
+#1 
+I2M.C.B 1 PN.NEXT 0     // define chord with next value in pattern 0
+I2M.C 1 60 127          // play chord 1 with rootnote 60 and velocity 127
+
+#Pattern 0
+137                     // = R10010001    = 0,3,7
+265                     // = R100100001   = 0,3,8
+1064                    // = R00010100001 = 3,5,10
+1060                    // = R00100100001 = 2,5,10
+```
+
+#### Use chord 2 as scale for a chord 1
+```
+#1
+I2M.C.B 1 R100100011    // define chord 1 = 0,3,7,8 (alternatively use "393")
+I2M.C.B 2 R10110101101  // define chord 2 = 0,2,3,5,7,8,10 (minor scale) (or "1453")
+I2M.C.SC 1 2            // set chord 2 as scale for chord 1
+
+#2
+J WRP + J 1 0 7         // increment J and wrap around 0 and 7
+I2M.C.STR 1 200         // set strumming for chord 1 to 200 ms
+I2M.C.TRP 1 J           // transpose chord 1 by J
+I2M.C 1 60 127          // play chord 1 with rootnote 60 and velocity 127
+```
+
+#### Send transformed chord notes to Just Friends or ER-301 
+
+To Just Friends:
+```
+#I 
+JF.MODE 1
+JF.SHIFT N 0
+
+#1
+I2M.C.B 1 R100100011    // define chord 1 = 0,3,7,8
+I2M.C.B 2 R10110101101  // define chord 2 = 0,2,3,5,7,8,10 (minor scale)
+I2M.C.SC 1 2            // set chord 2 as scale for chord 1
+
+#2
+J WRP + J 1 0 4         // increment J and wrap around 4
+I2M.C.DIS 1 J 2         // distort chord 1 by J at anchor point 2
+I2M.C.VCUR 1 1 40 100   // set a linear (type 1) velocity curve from 40% to 100%
+
+#3
+EV 4: $ 2
+J WRP + J 1 0 3         // increment J and wrap around chord length
+X I2M.C.QN 1 0 J        // get chord note and store in X
+Y I2M.C.QV 1 127 J      // get chord note velocity and store in Y
+Z SCL 0 127 0 800 Y     // scale velocity from 0..127 to 0..800
+JF.NOTE N X VV Z        // play on Just Friends
+```
+
+To ER-301:  
+
+```
+#3
+J WRP + J 1 0 3                 // increment J and wrap around chord length
+SC.CV 1 N I2M.C.QN 1 0 J        // send V/Oct to ER-301
+SC.CV 2 VV I2M.C.QV 1 127 J     // send velocity to ER-301 (set Gain to 7.88)
+SC.TR.P 1                       // send a trigger to ER-301 envelope
+```
+
+#### Query CC 1-4 and store values in Pattern 0
+```
+#1 
+L 0 3: PN 0 I I2M.Q.CC + I 1
+```
+
+#### Query MIDI notes from controller
+
+Arpeggiator that plays MIDI notes currently held down on a connected MIDI controller.  
+CV 1 sends out the V/OCT and CV 2 sends out the velocity. 
+
+```
+#I
+I2M.Q.LATCH 0           // setting to only store currently played MIDI notes
+
+#M
+$ 1
+
+#1
+J WRP + J 1 0 7         // counter from 0..7
+CV 1 N - I2M.Q.N J 48   // query MIDI note number and subtract 4 octaves
+CV 2 VV * 4 I2M.Q.V J   // query MIDI note velocity and scale to VV 0..508
+```
+
+---
+
 ## Teletype OPs
+
 
 ### Overview
 
-| Type | OP                                                    | Alias           | Channel-specific variant [(?)](#channel-specific-op-variants)      | Function      |
-| ---- | ----------------------------------------------------- | --------------- | -------------------------------------------- | ----------------------------------- |
-| get  | [I2M.CH](#i2mch)                                      | I2M.#           |                                              | Get current Channel                 |
-|      | [I2M.CH channel](#i2mch)                              | I2M.#           |                                              | Set current Channel                 |
-| get  | [I2M.TIME](#i2mtime)                                  | I2M.T           | I2M.T# channel                               | Get note duration                   |
-|      | [I2M.TIME duration](#i2mtime)                         | I2M.T           | I2M.T# channel duration                      | Set note duration                   |
-| get  | [I2M.SHIFT](#i2mshift)                                | I2M.S           | I2M.S# channel                               | Get note shift                      |
-|      | [I2M.SHIFT semitones](#i2mshift)                      | I2M.S           | I2M.S# channel semitones                     | Set note shift                      |
-|      | [I2M.MIN note mode](#i2mmin)                          |                 | I2M.MIN# channel note mode                   | Set minimum note                    |
-|      | [I2M.MAX note mode](#i2mmax)                          |                 | I2M.MAX# channel note mode                   | Set maximum note                    |
-| get  | [I2M.REP](#i2mrep)                                    |                 | I2M.REP# channel                             | Get note repetition                 |
-|      | [I2M.REP repetitions](#i2mrep)                        |                 | I2M.REP# channel repetitions                 | Set note repetition                 |
-| get  | [I2M.RAT](#i2mrat)                                    |                 | I2M.RAT# channel                             | Get note ratcheting                 |
-|      | [I2M.RAT ratchets](#i2mrat)                           |                 | I2M.RAT# channel ratchets                    | Set note ratcheting                 |
-|      | [I2M.NOTE note velocity](#i2mnote)                    | I2M.N           | I2M.N# channel note velocity                 | Send Note On                        |
-|      | [I2M.NOTE.O note](#i2mnoteo)                          | I2M.NO          | I2M.NO# channel note                         | Send Note Off                       |
-|      | [I2M.NT note velocity duration](#i2mnt)               |                 | I2M.NT# channel note velocity dur            | Send Note On with duration          |
-|      | [I2M.CHORD chord rootnote velocity](#i2mchord)        | I2M.C           | I2M.C# channel chord rootnote vel            | Play chord                          |
-|      | [I2M.C.ADD chord note](#i2mcadd)                      | I2M.C+          |                                              | Add note to chord                   |
-|      | [I2M.C.RM chord note](#i2mcrm)                        | I2M.C-          |                                              | Remove note to chord                |
-|      | [I2M.C.INS chord index note](#i2mcins)                |                 |                                              | Insert note at index                |
-|      | [I2M.C.DEL chord index](#i2mcdel)                     |                 |                                              | Delete note at index                |
-|      | [I2M.C.SET chord index note](#i2mcset)                |                 |                                              | Set note at index                   |
-|      | [I2M.C.B chord revbinary](#i2mcb)                     |                 |                                              | Define chord using reverse binary   |
-|      | [I2M.C.CLR chord](#i2mcclr)                           |                 |                                              | Clear chord                         |
-| get  | [I2M.C.L chord](#i2mcl)                               |                 |                                              | Get chord length                    |
-|      | [I2M.C.L chord length](#i2mcl)                        |                 |                                              | Set chord length                    |
-|      | [I2M.C.SC chord1 chord2](#i2mcsc)                     |                 |                                              | Set chord2 as scale for chord1      |
-|      | [I2M.C.REV chord iterations](#i2mcrev)                |                 |                                              | Set chord reversal                  |
-|      | [I2M.C.ROT chord iterations](#i2mcrot)                |                 |                                              | Set chord rotation                  |
-|      | [I2M.C.TRP chord semitones](#i2mctrp)                 |                 |                                              | Set chord transposition             |
-|      | [I2M.C.DIS chord iter. anchorpoint](#i2mcdis)         |                 |                                              | Set chord distortion                |
-|      | [I2M.C.REF chord iter. anchorpoint](#i2mcref)         |                 |                                              | Set chord reflection                |
-|      | [I2M.C.INV chord iteration](#i2mcinv)                 |                 |                                              | Set chord inversion                 |
-|      | [I2M.C.STR chord ms](#i2mcstr)                        |                 |                                              | Set chord strumming                 |
-|      | [I2M.C.VCUR chord curve start end](#i2mcvcur)         | I2M.V~          |                                              | Set chord velocity curve            |
-|      | [I2M.C.TCUR chord curve start end](#i2mctcur)         | I2M.T~          |                                              | Set chord time curve                |
-|      | [I2M.C.DIR chord direction](#i2mcdir)                 |                 |                                              | Set chord play direction            |
-|      | [I2M.C.QN chord rootnote index](#i2mcqn)              |                 |                                              | Query chord note at index           |
-|      | [I2M.C.QV chord velocity index](#i2mcqv)              |                 |                                              | Query chord note velocity at index  |
-|      | [I2M.B.R on/off](#i2mbr)                              |                 |                                              | Turn recording to buffer on/off     |
-|      | [I2M.B.L length](#i2mbl)                              |                 |                                              | Set buffer length                   |
-|      | [I2M.B.START offset](#i2mbstart)                      |                 |                                              | Add offset to buffer start          |   
-|      | [I2M.B.END offset](#i2mbend)                          |                 |                                              | Add a negative offset to buffer end | 
-|      | [I2M.B.DIR direction](#i2mbdir)                       |                 |                                              | Set buffer play direction           |    
-|      | [I2M.B.SPE percent](#i2mbspe)                         |                 |                                              | Set buffer play speed               |
-|      | [I2M.B.FB iterations](#i2mbfb)                        |                 |                                              | Iterations until velocity reaches 0 |
-|      | [I2M.B.NSHIFT semitones](#i2mbnshift)                 |                 |                                              | Set note shift                      |
-|      | [I2M.B.VSHIFT velocity](#i2mbvshift)                  |                 |                                              | Set velocity shift                  |
-|      | [I2M.B.TSHIFT ms](#i2mbtshift)                        |                 |                                              | Set duration shift                  |
-|      | [I2M.B.NOFF semitones](#i2mbnoff)                     |                 |                                              | Set note offset                     |
-|      | [I2M.B.VOFF velocity](#i2mbvoff)                      |                 |                                              | Set velocity offset                 |
-|      | [I2M.B.TOFF ms](#i2mbtoff)                            |                 |                                              | Set duration offset                 |
-|      | [I2M.B.CLR](#i2mbclr)                                 |                 |                                              | Clear the buffer                    |
-|      | [I2M.B.MODE mode](#i2mbmode)                          |                 |                                              | Set buffer mode (Free, Tape)        |
-|      | [I2M.CC controller value](#i2mcc)                     |                 | I2M.CC# channel controller value             | Send CC                             |
-|      | [I2M.CCV controller value](#i2mccv)                   |                 | I2M.CCV# channel controller value            | Send CC with volt value             |
-| get  | [I2M.CC.OFF controller](#i2mccoff)                    |                 | I2M.CC.OFF# channel controller               | Get CC offset                       |
-|      | [I2M.CC.OFF controller offset](#i2mccoff)             |                 | I2M.CC.OFF# channel controller offset        | Set CC offset                       |
-| get  | [I2M.CC.SLEW controller](#i2mccslew)                  |                 | I2M.CC.SLEW# channel controller              | Get CC slew                         |
-|      | [I2M.CC.SLEW controller ms](#i2mccslew)               |                 | I2M.CC.SLEW# channel controller ms           | Set CC slew                         |
-|      | [I2M.CC.SET controller value](#i2mccset)              |                 | I2M.CC.SET# channel controller value         | Send CC and ignore slew             |
-|      | [I2M.NRPN msb lsb value](#i2mnrpn)                    |                 | I2M.NRPN# channel msb lsb value              | Send NRPN                           |
-| get  | [I2M.NRPN.OFF msb lsb](#i2mnrpnoff)                   |                 | I2M.NRPN.OFF# channel msb lsb                | Get NRPN offset                     |
-|      | [I2M.NRPN.OFF msb lsb offset](#i2mnrpnoff)            |                 | I2M.NRPN.OFF# channel msb lsb offset         | Set NRPN offset                     |
-| get  | [I2M.NRPN.SLEW msb lsb](#i2mnrpnslew)                 |                 | I2M.NRPN.SLEW# channel msb lsb               | Get NRPN slew                       |
-|      | [I2M.NRPN.SLEW msb lsb ms](#i2mnrpnslew)              |                 | I2M.NRPN.SLEW# channel msb lsb ms            | Set NRPN slew                       |
-|      | [I2M.NRPN.SET msb lsb value](#i2mnrpnset)             |                 | I2M.NRPN.SET# value msb lsb value            | Send NRPN and ignore slew           |
-|      | [I2M.PRG program](#i2mprg)                            |                 |                                              | Send Program Change                 |
-|      | [I2M.PB value](#i2mpb)                                |                 |                                              | Send Pitchbend                      |
-|      | [I2M.AT value](#i2mat)                                |                 |                                              | Send Aftertouch                     |
-|      | [I2M.CLK](#i2mclk)                                    |                 |                                              | Send Clock                          |
-|      | [I2M.START](#i2mstart)                                |                 |                                              | Send Clock Start                    |
-|      | [I2M.STOP](#i2mstop)                                  |                 |                                              | Send Clock Stop                     |
-|      | [I2M.CONT](#i2mcont)                                  |                 |                                              | Send Clock Continue                 |
-| get  | [I2M.Q.CH](#i2mqch)                                   |                 |                                              | Get current MIDI in Channel         |
-|      | [I2M.Q.CH channel](#i2mqch)                           | I2M.Q.#         |                                              | Set current MIDI in Channel         |
-|      | [I2M.Q.LATCH on/off](#i2mqlatch)                      |                 |                                              | Turn latch on/off                   |
-| get  | [I2M.Q.NOTE index](#i2mqnote)                         | I2M.Q.N         |                                              | Get x-last Note On                  |
-| get  | [I2M.Q.VEL index](#i2mqvel)                           | I2M.Q.V         |                                              | Get x-last Velocity                 |
-| get  | [I2M.Q.CC controller](#i2mqcc)                        |                 |                                              | Get CC value                        |
-| get  | [I2M.Q.LCH](#i2mqlch)                                 |                 |                                              | Get last MIDI in Channel            |
-| get  | [I2M.Q.LN](#i2mqln)                                   |                 |                                              | Get last MIDI in Note On            |
-| get  | [I2M.Q.LV](#i2mqlv)                                   |                 |                                              | Get last MIDI in Velocity           |
-| get  | [I2M.Q.LO](#i2mqlo)                                   |                 |                                              | Get last MIDI in Note Off           |
-| get  | [I2M.Q.LC](#i2mqlc)                                   |                 |                                              | Get last MIDI in Controller         |
-| get  | [I2M.Q.LCC](#i2mqlcc)                                 |                 |                                              | Get last MIDI in CC Value           |
-|      | [I2M_S_QT](#i2msqt)                                   |                 |                                              | Quantise to Sinfonion key           |
-|      | [I2M.PANIC](#i2mpanic)                                |                 |                                              | Don't panic!                        |
+| Type | OP                                             | Alias   | Channel-specific variant [(?)](#channel-specific-op-variants) | Function                    |
+| ---- | ---------------------------------------------- | ------- | ----------------------------------------------------- | ----------------------------------- |
+| get  | [I2M.CH](#i2mch)                               | I2M.#   |                                                       | Get current Channel                 |
+|      | [I2M.CH channel](#i2mch)                       | I2M.#   |                                                       | Set current Channel                 |
+| get  | [I2M.TIME](#i2mtime)                           | I2M.T   | [I2M.T# channel](#i2mt)                               | Get note duration                   |
+|      | [I2M.TIME duration](#i2mtime)                  | I2M.T   | [I2M.T# channel duration](#i2mt)                      | Set note duration                   |
+| get  | [I2M.SHIFT](#i2mshift)                         | I2M.S   | [I2M.S# channel](#i2ms)                               | Get note shift                      |
+|      | [I2M.SHIFT semitones](#i2mshift)               | I2M.S   | [I2M.S# channel semitones](#i2ms)                     | Set note shift                      |
+|      | [I2M.MIN note mode](#i2mmin)                   |         | [I2M.MIN# channel note mode](#i2mmin-1)               | Set minimum note                    |
+|      | [I2M.MAX note mode](#i2mmax)                   |         | [I2M.MAX# channel note mode](#i2mmax-1)               | Set maximum note                    |
+| get  | [I2M.REP](#i2mrep)                             |         | [I2M.REP# channel](#i2mrep-1)                         | Get note repetition                 |
+|      | [I2M.REP repetitions](#i2mrep)                 |         | [I2M.REP# channel repetitions](#i2mrep-1)             | Set note repetition                 |
+| get  | [I2M.RAT](#i2mrat)                             |         | [I2M.RAT# channel](#i2mrat-1)                         | Get note ratcheting                 |
+|      | [I2M.RAT ratchets](#i2mrat)                    |         | [I2M.RAT# channel ratchets](#i2mrat-1)                | Set note ratcheting                 |
+|      | [I2M.MUTE on/off](#i2mmute)                    |         | [I2M.MUTE# channel on/off](i2mmute-1)                 | Set channel mute state              |
+|      | [I2M.SOLO on/off](#i2msolo)                    |         | [I2M.SOLO# channel on/off](i2msolo-2)                 | Set channel solo state              |
+|      | [I2M.NOTE note velocity](#i2mnote)             | I2M.N   | [I2M.N# channel note velocity](#i2mn)                 | Send Note On                        |
+|      | [I2M.NOTE.O note](#i2mnoteo)                   | I2M.NO  | [I2M.NO# channel note](#i2mno)                        | Send Note Off                       |
+|      | [I2M.NT note velocity duration](#i2mnt)        |         | [I2M.NT# channel note velocity dur](#i2mnt-1)         | Send Note On with duration          |
+|      | [I2M.CHORD chord rootnote velocity](#i2mchord) | I2M.C   | [I2M.C# channel chord rootnote vel](#i2mc)            | Play chord                          |
+|      | [I2M.C.ADD chord note](#i2mcadd)               | I2M.C+  |                                                       | Add note to chord                   |
+|      | [I2M.C.RM chord note](#i2mcrm)                 | I2M.C-  |                                                       | Remove note to chord                |
+|      | [I2M.C.INS chord index note](#i2mcins)         |         |                                                       | Insert note at index                |
+|      | [I2M.C.DEL chord index](#i2mcdel)              |         |                                                       | Delete note at index                |
+|      | [I2M.C.SET chord index note](#i2mcset)         |         |                                                       | Set note at index                   |
+|      | [I2M.C.B chord revbinary](#i2mcb)              |         |                                                       | Define chord using reverse binary   |
+|      | [I2M.C.CLR chord](#i2mcclr)                    |         |                                                       | Clear chord                         |
+| get  | [I2M.C.L chord](#i2mcl)                        |         |                                                       | Get chord length                    |
+|      | [I2M.C.L chord length](#i2mcl)                 |         |                                                       | Set chord length                    |
+|      | [I2M.C.SC chord1 chord2](#i2mcsc)              |         |                                                       | Set chord2 as scale for chord1      |
+|      | [I2M.C.REV chord iterations](#i2mcrev)         |         |                                                       | Set chord reversal                  |
+|      | [I2M.C.ROT chord iterations](#i2mcrot)         |         |                                                       | Set chord rotation                  |
+|      | [I2M.C.TRP chord semitones](#i2mctrp)          |         |                                                       | Set chord transposition             |
+|      | [I2M.C.DIS chord iter. anchorpoint](#i2mcdis)  |         |                                                       | Set chord distortion                |
+|      | [I2M.C.REF chord iter. anchorpoint](#i2mcref)  |         |                                                       | Set chord reflection                |
+|      | [I2M.C.INV chord iteration](#i2mcinv)          |         |                                                       | Set chord inversion                 |
+|      | [I2M.C.STR chord ms](#i2mcstr)                 |         |                                                       | Set chord strumming                 |
+|      | [I2M.C.VCUR chord curve start end](#i2mcvcur)  | I2M.V~  |                                                       | Set chord velocity curve            |
+|      | [I2M.C.TCUR chord curve start end](#i2mctcur)  | I2M.T~  |                                                       | Set chord time curve                |
+|      | [I2M.C.DIR chord direction](#i2mcdir)          |         |                                                       | Set chord play direction            |
+|      | [I2M.C.QN chord rootnote index](#i2mcqn)       |         |                                                       | Query chord note at index           |
+|      | [I2M.C.QV chord velocity index](#i2mcqv)       |         |                                                       | Query chord note velocity at index  |
+|      | [I2M.B.R on/off](#i2mbr)                       |         |                                                       | Turn recording to buffer on/off     |
+|      | [I2M.B.L length](#i2mbl)                       |         |                                                       | Set buffer length                   |
+|      | [I2M.B.START offset](#i2mbstart)               |         |                                                       | Add offset to buffer start          |   
+|      | [I2M.B.END offset](#i2mbend)                   |         |                                                       | Add a negative offset to buffer end | 
+|      | [I2M.B.DIR direction](#i2mbdir)                |         |                                                       | Set buffer play direction           |    
+|      | [I2M.B.SPE percent](#i2mbspe)                  |         |                                                       | Set buffer play speed               |
+|      | [I2M.B.FB iterations](#i2mbfb)                 |         |                                                       | Iterations until velocity reaches 0 |
+|      | [I2M.B.NSHIFT semitones](#i2mbnshift)          |         |                                                       | Set note shift                      |
+|      | [I2M.B.VSHIFT velocity](#i2mbvshift)           |         |                                                       | Set velocity shift                  |
+|      | [I2M.B.TSHIFT ms](#i2mbtshift)                 |         |                                                       | Set duration shift                  |
+|      | [I2M.B.NOFF semitones](#i2mbnoff)              |         |                                                       | Set note offset                     |
+|      | [I2M.B.VOFF velocity](#i2mbvoff)               |         |                                                       | Set velocity offset                 |
+|      | [I2M.B.TOFF ms](#i2mbtoff)                     |         |                                                       | Set duration offset                 |
+|      | [I2M.B.CLR](#i2mbclr)                          |         |                                                       | Clear the buffer                    |
+|      | [I2M.B.MODE mode](#i2mbmode)                   |         |                                                       | Set buffer mode (Free, Tape)        |
+|      | [I2M.CC controller value](#i2mcc)              |         | [I2M.CC# channel controller value](#i2mcc-1)          | Send CC                             |
+|      | [I2M.CCV controller value](#i2mccv)            |         | [I2M.CCV# channel controller value](#i2mccv-1)        | Send CC with volt value             |
+| get  | [I2M.CC.OFF controller](#i2mccoff)             |         | [I2M.CC.OFF# channel controller](#i2mccoff-1)         | Get CC offset                       |
+|      | [I2M.CC.OFF controller offset](#i2mccoff)      |         | [I2M.CC.OFF# channel controller offset](#i2mccoff-1)  | Set CC offset                       |
+| get  | [I2M.CC.SLEW controller](#i2mccslew)           |         | [I2M.CC.SLEW# channel controller](#i2mccslew-1)       | Get CC slew                         |
+|      | [I2M.CC.SLEW controller ms](#i2mccslew)        |         | [I2M.CC.SLEW# channel controller ms](#i2mccslew-1)    | Set CC slew                         |
+|      | [I2M.CC.SET controller value](#i2mccset)       |         | [I2M.CC.SET# channel controller value](#i2mccset-1)   | Send CC and ignore slew             |
+|      | [I2M.NRPN msb lsb value](#i2mnrpn)             |         | [I2M.NRPN# channel msb lsb value](#i2mnrpn-1)         | Send NRPN                           |
+| get  | [I2M.NRPN.OFF msb lsb](#i2mnrpnoff)            |         | [I2M.NRPN.OFF# channel msb lsb](#i2mnrpnoff-1)        | Get NRPN offset                     |
+|      | [I2M.NRPN.OFF msb lsb offset](#i2mnrpnoff)     |         | [I2M.NRPN.OFF# channel msb lsb offset](#i2mnrpnoff-1) | Set NRPN offset                     |
+| get  | [I2M.NRPN.SLEW msb lsb](#i2mnrpnslew)          |         | [I2M.NRPN.SLEW# channel msb lsb](#i2mnrpnslew-1)      | Get NRPN slew                       |
+|      | [I2M.NRPN.SLEW msb lsb ms](#i2mnrpnslew)       |         | [I2M.NRPN.SLEW# channel msb lsb ms](#i2mnrpnslew-1)   | Set NRPN slew                       |
+|      | [I2M.NRPN.SET msb lsb value](#i2mnrpnset)      |         | [I2M.NRPN.SET# value msb lsb value](#i2mnrpnset-1)    | Send NRPN and ignore slew           |
+|      | [I2M.PRG program](#i2mprg)                     |         |                                                       | Send Program Change                 |
+|      | [I2M.PB value](#i2mpb)                         |         |                                                       | Send Pitchbend                      |
+|      | [I2M.AT value](#i2mat)                         |         |                                                       | Send Aftertouch                     |
+|      | [I2M.CLK](#i2mclk)                             |         |                                                       | Send Clock                          |
+|      | [I2M.START](#i2mstart)                         |         |                                                       | Send Clock Start                    |
+|      | [I2M.STOP](#i2mstop)                           |         |                                                       | Send Clock Stop                     |
+|      | [I2M.CONT](#i2mcont)                           |         |                                                       | Send Clock Continue                 |
+| get  | [I2M.Q.CH](#i2mqch)                            |         |                                                       | Get current MIDI in Channel         |
+|      | [I2M.Q.CH channel](#i2mqch)                    | I2M.Q.# |                                                       | Set current MIDI in Channel         |
+|      | [I2M.Q.LATCH on/off](#i2mqlatch)               |         |                                                       | Turn latch on/off                   |
+| get  | [I2M.Q.NOTE index](#i2mqnote)                  | I2M.Q.N |                                                       | Get x-last Note On                  |
+| get  | [I2M.Q.VEL index](#i2mqvel)                    | I2M.Q.V |                                                       | Get x-last Velocity                 |
+| get  | [I2M.Q.CC controller](#i2mqcc)                 |         |                                                       | Get CC value                        |
+| get  | [I2M.Q.LCH](#i2mqlch)                          |         |                                                       | Get last MIDI in Channel            |
+| get  | [I2M.Q.LN](#i2mqln)                            |         |                                                       | Get last MIDI in Note On            |
+| get  | [I2M.Q.LV](#i2mqlv)                            |         |                                                       | Get last MIDI in Velocity           |
+| get  | [I2M.Q.LO](#i2mqlo)                            |         |                                                       | Get last MIDI in Note Off           |
+| get  | [I2M.Q.LC](#i2mqlc)                            |         |                                                       | Get last MIDI in Controller         |
+| get  | [I2M.Q.LCC](#i2mqlcc)                          |         |                                                       | Get last MIDI in CC Value           |
+|      | [I2M.PANIC](#i2mpanic)                         |         |                                                       | Don't panic!                        |
 
 
 ---
 
-
-- OP  
-OP (set)  
-Alias  
+#### OP Name
+`OP`  
+`OP (set)`  
+`Alias`    
 Description  
 
 
@@ -219,36 +352,90 @@ Get currently set MIDI channel / Set MIDI channel `x` (1..16 for TRS, 17..32 for
 `I2M.TIME x`  
 `I2M.T`  
 
-Get current note duration / Set note duration for MIDI notes to `x` ms (0..32767). Based on note duration, i2c2midi will send a MIDI Note Off message automatically. Set `x = 0` to deactivate automatic Note Off messages. Default is `x = 100`. Use `I2M.T#` to add channel parameter [(see below)](#channel-specific-op-variants).
+Get current note duration / Set note duration of MIDI notes to `x` ms (0..32767) for current channel. Based on note duration, i2c2midi will send a MIDI Note Off message automatically. Set `x = 0` to deactivate automatic Note Off messages. Default is `x = 100`.
+
+#### I2M.T#
+`I2M.T# ch`
+`I2M.T# ch x`  
+
+Get current note duration / Set note duration of MIDI notes to `x` ms (0..32767) for channel `ch` (0..32). Based on note duration, i2c2midi will send a MIDI Note Off message automatically. Set `x = 0` to deactivate automatic Note Off messages. Default is `x = 100`. Use `ch = 0` to set for all channels.
 
 #### I2M.SHIFT
 `I2M.SHIFT`  
 `I2M.SHIFT x`  
 `I2M.S`  
 
-Get current transposition / Set transposition of MIDI notes to `x` semitones (-127..127). Default is `x = 0`. Use `I2M.S#` to add channel parameter [(see below)](#channel-specific-op-variants).  
+Get current transposition / Set transposition of MIDI notes to `x` semitones (-127..127) for current channel. Default is `x = 0`.  
+
+#### I2M.S#
+`I2M.S# ch`  
+`I2M.S# ch x`  
+
+Get current transposition / Set transposition of MIDI notes to `x` semitones (-127..127) for channel `ch` (0..32). Default is `x = 0`. Use `ch = 0` to set for all channels.  
 
 #### I2M.MIN
 `I2M.MIN x y`  
 
-Set minimum note number for MIDI notes to `x` (0..127), using mode `y` (0..3). Default is `x = 0` and `y = 0`. The following modes are available for notes lower than the minimum: 0) Ignore notes 1) Clamp notes 2) Fold back notes by one octave 3) Fold back notes by multiple octaves. Use `I2M.MIN#` to add channel parameter [(see below)](#channel-specific-op-variants).  
+Set minimum note number of MIDI notes to `x` (0..127), using mode `y` (0..3), for current channel. Default is `x = 0` and `y = 0`. The following modes are available for notes lower than the minimum: 0) Ignore notes 1) Clamp notes 2) Fold back notes by one octave 3) Fold back notes by multiple octaves.  
+
+#### I2M.MIN#
+`I2M.MIN# ch x y`  
+
+Set minimum note number of MIDI notes to `x` (0..127), using mode `y` (0..3), for channel `ch` (0..32). Default is `x = 0` and `y = 0`. The following modes are available for notes lower than the minimum: 0) Ignore notes 1) Clamp notes 2) Fold back notes by one octave 3) Fold back notes by multiple octaves. Use `ch = 0` to set for all channels.  
 
 #### I2M.MAX
 `I2M.MAX x y`  
 
-Set maximum note number for MIDI notes to `x` (0..127), using mode `y` (0..3). Default is `x = 0` and `y = 0`. The following modes are available for notes higher than the maximum: 0) Ignore notes 1) Clamp notes 2) Fold back notes by one octave 3) Fold back notes by multiple octaves. Use `I2M.MAX#` to add channel parameter [(see below)](#channel-specific-op-variants).  
+Set maximum note number of MIDI notes to `x` (0..127), using mode `y` (0..3), for current channel. Default is `x = 0` and `y = 0`. The following modes are available for notes higher than the maximum: 0) Ignore notes 1) Clamp notes 2) Fold back notes by one octave 3) Fold back notes by multiple octaves. 
+
+#### I2M.MAX#
+`I2M.MAX# ch x y`  
+
+Set maximum note number of MIDI notes to `x` (0..127), using mode `y` (0..3), for channel `ch` (0..32). Default is `x = 0` and `y = 0`. The following modes are available for notes higher than the maximum: 0) Ignore notes 1) Clamp notes 2) Fold back notes by one octave 3) Fold back notes by multiple octaves. Use `ch = 0` to set for all channels.  
 
 #### I2M.REP
 `I2M.REP`  
 `I2M.REP x`  
 
-Get current repetition / Set repetition of MIDI notes to `x` repetitions (1..127). Set `x = 1` for no repetitions. Default is `x = 1`. Use `I2M.REP#` to add channel parameter [(see below)](#channel-specific-op-variants).  
+Get current repetition / Set repetition of MIDI notes to `x` repetitions (1..127) for current channel. Set `x = 1` for no repetitions. Default is `x = 1`.  
+
+#### I2M.REP#
+`I2M.REP# ch`  
+`I2M.REP# ch x`  
+
+Get current repetition / Set repetition of MIDI notes to `x` repetitions (1..127) for channel `ch` (0..32). Set `x = 1` for no repetitions. Default is `x = 1`. Use `ch = 0` to set for all channels.  
 
 #### I2M.RAT
 `I2M.RAT`  
 `I2M.RAT x`  
 
-Get current ratcheting / Set ratcheting of MIDI notes to `x` ratchets (1..127). Set `x = 1` for no ratcheting. Default is `x = 1`. Use `I2M.RAT#` to add channel parameter [(see below)](#channel-specific-op-variants).  
+Get current ratcheting / Set ratcheting of MIDI notes to `x` ratchets (1..127) for current channel. Set `x = 1` for no ratcheting. Default is `x = 1`.  
+
+#### I2M.RAT#
+`I2M.RAT# ch`  
+`I2M.RAT# ch x`  
+
+Get current ratcheting / Set ratcheting of MIDI notes to `x` ratchets (1..127) for channel `ch` (0..32). Set `x = 1` for no ratcheting. Default is `x = 1`. Use `ch = 0` to set for all channels.  
+
+#### I2M.MUTE
+`I2M.MUTE x`  
+  
+Set mute state of current MIDI channel to `x`. If `x = 1` all outoing MIDI messages on that channel are muted. Default is `x = 0`.  
+
+#### I2M.MUTE#
+`I2M.MUTE# ch x`  
+  
+Set mute state of MIDI channel `ch` to `x`. If `x = 1` all outoing MIDI messages on that channel are muted. Default is `x = 0`. Use `ch = 0` to set for all channels.  
+
+#### I2M.SOLO
+`I2M.SOLO x`  
+
+Set solo state of current MIDI channel to `x`. If `x = 1` all outoing MIDI messages on that channel are solod. Default is `x = 0`.  
+
+#### I2M.SOLO#
+`I2M.SOLO x`  
+
+Set solo state of MIDI channel `ch` to `x`. If `x = 1` all outoing MIDI messages on that channel are solod. Default is `x = 0`. Use `ch = 0` to set for all channels.  
 
 
 ---
@@ -256,24 +443,37 @@ Get current ratcheting / Set ratcheting of MIDI notes to `x` ratchets (1..127). 
 ### MIDI out: Notes
 *Send an individual MIDI note. Each note consists of a note number (pitch), velocity and duration. i2c2midi will take care of Note Off messages send an automatic Note Off message based on the set note duration. The note duration can be set globally via `I2M.TIME` or individually via `I2M.NT`.*  
 
-
 #### I2M.NOTE
 `I2M.NOTE x y`  
 `I2M.N`  
 
-Send MIDI Note On message for note number `x` (0..127) with velocity `y` (1..127). A velocity of `0` will be treated as a MIDI Note Off message. Use `I2M.N#` to add channel parameter [(see below)](#channel-specific-op-variants).  
+Send MIDI Note On message for note number `x` (0..127) with velocity `y` (1..127) on current channel. A velocity of `0` will be treated as a MIDI Note Off message.  
+
+#### I2M.N#
+`I2M.N# ch x y`    
+
+Send MIDI Note On message for note number `x` (0..127) with velocity `y` (1..127) on channel `ch` (1..32). A velocity of `0` will be treated as a MIDI Note Off message.
 
 #### I2M.NOTE.O
 `I2M.NOTE.O x`  
 `I2M.NO`  
 
-Send a manual MIDI Note Off message for note number `x` (0..127). This can be used either before i2c2midi sends the automatic Note Off message (to stop the note from playing before its originally planned ending), or in combination with `I2M.TIME` set to `0` (in which case i2c2midi does not send automatic Note Off messages). Use `I2M.NO#` to add channel parameter [(see below)](#channel-specific-op-variants).  
+Send a manual MIDI Note Off message for note number `x` (0..127) on current channel. This can be used either before i2c2midi sends the automatic Note Off message (to stop the note from playing before its originally planned ending), or in combination with `I2M.TIME` set to `0` (in which case i2c2midi does not send automatic Note Off messages).
+
+#### I2M.NO#
+`I2M.NO# ch x`  
+
+Send a manual MIDI Note Off message for note number `x` (0..127) on channel `ch` (1..32). This can be used either before i2c2midi sends the automatic Note Off message (to stop the note from playing before its originally planned ending), or in combination with `I2M.TIME` set to `0` (in which case i2c2midi does not send automatic Note Off messages).  
 
 #### I2M.NT
 `I2M.NT x y z`  
 
-Send MIDI Note On message for note number `x` (0..127) with velocity `y` (1..127) and note duration `z` ms (0..32767). Use `I2M.NT#` to add channel parameter [(see below)](#channel-specific-op-variants).  
+Send MIDI Note On message for note number `x` (0..127) with velocity `y` (1..127) and note duration `z` ms (0..32767) on current channel.   
 
+#### I2M.NT#
+`I2M.NT# ch x y z`  
+
+Send MIDI Note On message for note number `x` (0..127) with velocity `y` (1..127) and note duration `z` ms (0..32767) on channel `ch` (1..32).    
 
 ---
 
@@ -284,7 +484,12 @@ Send MIDI Note On message for note number `x` (0..127) with velocity `y` (1..127
 `I2M.CHORD x y z`  
 `I2M.C`  
 
-Play chord `x` (1..8) with root note `y` (0..127) and velocity `z` (1..127). Use `I2M.C#` to add channel parameter [(see below)](#channel-specific-op-variants).  
+Play chord `x` (1..8) with root note `y` (0..127) and velocity `z` (1..127) on current channel.  
+
+#### I2M.C#
+`I2M.C# ch x y z`  
+
+Play chord `x` (1..8) with root note `y` (0..127) and velocity `z` (1..127) on channel `ch` (1..32).  
 
 #### I2M.C.ADD
 `I2M.C.ADD x y`  
@@ -416,7 +621,6 @@ Get the transformed note velocity of a chord note for chord `x` (1..8) with root
 *Record MIDI notes into a looping buffer. i2c2midi's MIDI buffer behaves much like a looping tape recorder, recording every MIDI note that leaves i2c2midi into the buffer. When the buffer reaches its end, it starts over and plays back the recorded notes, while new notes are recorded (overdubbed). Notes in the buffer can be modified with each buffer iteration. Change the note pitch via `I2M.B.NSHIFT` and `I2M.B.VSHIFT`, change note velocity via `I2M.B.FB`, `I2M.B.VSHIFT` and `I2M.B.VOFF`, change note duration via `I2M.B.TSHIFT` and `I2M.B.TOFF`. When notes reach a velocity of zero they get deleted from the buffer. However, notes can be held in the buffer indefinitely by setting `I2M.B.FB` to 0. Furthermore, the speed and playback direction of the buffer can be set, as well as the length and a start and end offset. The buffer can work in two modes, set via `I2M.B.MODE`.*   
 *Depending on the settings, the buffer can act more like a MIDI looper or more like a pitch-shifting delay for MIDI notes.*  
 
-
 #### I2M.B.R  
 `I2M.B.R x`  
 
@@ -467,7 +671,6 @@ Set the velocity shift of recorded notes to `x` (-127..127). With each buffer it
 
 Set the note duration shift ("time shift") of recorded notes to `x` ms (-16384..16383). With each buffer iteration, this value gets added accumulatively to the original note duration. E.g. with a duration shift setting of `x = 100`, a recorded note with duration `200` will be played with duration `300` during the first buffer iteration, with duration `400` during the second iteration, etc. Default is `x = 0`.  
 
-
 #### I2M.B.NOFF     
 `I2M.B.NOFF x`  
 
@@ -493,8 +696,6 @@ Clear the buffer, erasing all recorded notes in the buffer.
 
 Set the buffer mode to `x` (0..1). The buffer can work in two different modes: 1) Digital 2) Tape. In Digital mode, the buffer speed ( set via `I2M.B.SPE`) works independent of note number and note duration: If the buffer speed changes, the note number and note duration of a recorded note stays unaffected. In Tape mode on the other hand, the buffer speed affects the note number and note duration of recorded notes in the buffer, mimicking the behaviour of real tape. If the buffer speed gets doubled, the note number is pitched up by one octave and the note duration gets divided in half. Similarly, if the buffer speed gets divided in half, the note number is pitched down an octave and the note duration gets doubled, etc. Default is `x = 0`.  
 
-
-
 ---
 
 ### MIDI out: CCs
@@ -503,65 +704,110 @@ Set the buffer mode to `x` (0..1). The buffer can work in two different modes: 1
 #### I2M.CC
 `I2M.CC x y`  
 
-Send MIDI CC message for controller `x` (0..127) with value `y` (0..127). Use `I2M.CC#` to add channel parameter [(see below)](#channel-specific-op-variants).  
+Send MIDI CC message for controller `x` (0..127) with value `y` (0..127) on current channel.  
+
+#### I2M.CC#
+`I2M.CC# ch x y`  
+
+Send MIDI CC message for controller `x` (0..127) with value `y` (0..127) on channel `ch` (1..32).  
 
 #### I2M.CCV
 `I2M.CCV x y`  
 
-Send MIDI CC message for controller `x` (0..127) with volt value `y` (0..16383, 0..+10V). Use `I2M.CCV#` to add channel parameter [(see below)](#channel-specific-op-variants).  
+Send MIDI CC message for controller `x` (0..127) with volt value `y` (0..16383, 0..+10V) on current channel.  
+
+#### I2M.CCV#
+`I2M.CCV# ch x y`  
+
+Send MIDI CC message for controller `x` (0..127) with volt value `y` (0..16383, 0..+10V) on channel `ch` (1..32).  
 
 #### I2M.CC.OFF
 `I2M.CC.OFF x`  
 `I2M.CC.OFF x y`  
 
-Get current offset / Set offset of values of controller `x` (0..127) to `y` (-127..127). Default is `y = 0`. Use `I2M.CC.OFF#` to add channel parameter [(see below)](#channel-specific-op-variants).  
+Get current offset / Set offset of values of controller `x` (0..127) to `y` (-127..127) for current channel. Default is `y = 0`.  
+
+#### I2M.CC.OFF#
+`I2M.CC.OFF# ch x`  
+`I2M.CC.OFF# ch x y`  
+
+Get current offset / Set offset of values of controller `x` (0..127) to `y` (-127..127) for channel `ch` (1..32). Default is `y = 0`.  
 
 #### I2M.CC.SLEW
 `I2M.CC.SLEW x`  
 `I2M.CC.SLEW x y`  
 
-Get current slew time for controller `x` / Set slew time for controller `x` (0..127) to `y` ms (0..32767). i2c2midi will ramp from the controller's last value to a new value within the given time `x`, sending MIDI CCs at a maximum rate of 30 ms. If the slewing is still ongoing when a new value is set, the slewing uses its current position as the last value. Is 8 CC controller values can be slewed simoultaneously before the oldest currently slewing value is overwritten by the newest. Default is `y = 0`. Use `I2M.CC.SLEW#` to add channel parameter [(see below)](#channel-specific-op-variants).  
+Get current slew time / Set slew time for controller `x` (0..127) to `y` ms (0..32767) for current channel. i2c2midi will ramp from the controller's last value to a new value within the given time `x`, sending MIDI CCs at a maximum rate of 30 ms. If the slewing is still ongoing when a new value is set, the slewing uses its current position as the last value. Is 8 CC controller values can be slewed simoultaneously before the oldest currently slewing value is overwritten by the newest. Default is `y = 0`.  
+
+#### I2M.CC.SLEW#
+`I2M.CC.SLEW# ch x`  
+`I2M.CC.SLEW# ch x y`  
+
+Get current slew time / Set slew time for controller `x` (0..127) to `y` ms (0..32767) for channel `ch` (1..32). i2c2midi will ramp from the controller's last value to a new value within the given time `x`, sending MIDI CCs at a maximum rate of 30 ms. If the slewing is still ongoing when a new value is set, the slewing uses its current position as the last value. Is 8 CC controller values can be slewed simoultaneously before the oldest currently slewing value is overwritten by the newest. Default is `y = 0`.  
 
 #### I2M.CC.SET
 `I2M.CC.SET x y`  
 
-Send MIDI CC message for controller `x` (0..127) with value `y` (0..127), bypassing any slew settings. Use `I2M.CC.SET#` to add channel parameter [(see below)](#channel-specific-op-variants).  
+Send MIDI CC message for controller `x` (0..127) with value `y` (0..127) on current channel, bypassing any slew settings.  
 
+#### I2M.CC.SET#
+`I2M.CC.SET# ch x y`  
+
+Send MIDI CC message for controller `x` (0..127) with value `y` (0..127) on channel `ch` (1..32), bypassing any slew settings.  
 
 ---
 
 ### MIDI out: NRPN
 *Send MIDI NRPN messages*
 
-
 #### I2M.NRPN
 `I2M.NRPN x y z`  
 
-Send MIDI NRPN message (high-res CC) for parameter MSB `x` and LSB `y` with value `y` (0..16383). Use `I2M.NRPN#` to add channel parameter [(see below)](#channel-specific-op-variants).  
+Send MIDI NRPN message (high-res CC) for parameter MSB `x` and LSB `y` with value `y` (0..16383) on current channel.  
+
+#### I2M.NRPN#
+`I2M.NRPN# ch x y z`  
+
+Send MIDI NRPN message (high-res CC) for parameter MSB `x` and LSB `y` with value `y` (0..16383) on channel `ch` (1..32).  
 
 #### I2M.NRPN.OFF
 `I2M.NRPN.OFF x y`  
 `I2M.NRPN.OFF x y z`  
 
-Get current offset / Set offset of values of NRPN messages to `z` (-16384..16383). Default is z = 0. Use `I2M.NRPN.OFF#` to add channel parameter [(see below)](#channel-specific-op-variants).  
+Get current offset / Set offset of values of NRPN messages to `z` (-16384..16383) for current channel. Default is `z = 0`.  
+
+#### I2M.NRPN.OFF#
+`I2M.NRPN.OFF# ch x y`  
+`I2M.NRPN.OFF# ch x y z`  
+
+Get current offset / Set offset of values of NRPN messages to `z` (-16384..16383) for channel `ch` (1..32). Default is `z = 0`.  
 
 #### I2M.NRPN.SLEW
 `I2M.NRPN.SLEW x y`  
 `I2M.NRPN.SLEW x y z`  
 
-Get current slew time / Set slew time for NRPN messages to `z` ms (0..32767). Default is z = 0. Use `I2M.NRPN.SLEW#` to add channel parameter [(see below)](#channel-specific-op-variants).  
+Get current slew time / Set slew time for NRPN messages to `z` ms (0..32767) for current channel. Default is `z = 0`.  
+
+#### I2M.NRPN.SLEW#
+`I2M.NRPN.SLEW# ch x y`  
+`I2M.NRPN.SLEW# ch x y z`  
+
+Get current slew time / Set slew time for NRPN messages to `z` ms (0..32767) for channel `ch` (1..32). Default is `z = 0`.  
 
 #### I2M.NRPN.SET
 `I2M.NRPN.SET x y z`  
 
-Send MIDI NRPN message for parameter MSB `x` and LSB `y` with value `y` (0..16383), bypassing any slew settings. Use `I2M.NRPN.SET#` to add channel parameter [(see below)](#channel-specific-op-variants).  
+Send MIDI NRPN message for parameter MSB `x` and LSB `y` with value `y` (0..16383) on current channel, bypassing any slew settings.  
 
+#### I2M.NRPN.SET#
+`I2M.NRPN.SET# ch x y z`  
+
+Send MIDI NRPN message for parameter MSB `x` and LSB `y` with value `y` (0..16383) on channel `ch` (1..32), bypassing any slew settings.  
 
 ---
 
 ### MIDI out: Misc
 *Send other MIDI messages like Program Change, Pitch Bend and Clock*
-
 
 #### I2M.PRG
 `I2M.PRG x`  
@@ -603,12 +849,10 @@ Send MIDI Clock Continue message
 
 Send MIDI Note Off messages for all notes on all channels, and reset note duration, shift, repetition, ratcheting, min/max  
 
-
 ---
 
 ### MIDI in: Settings
 *Settings for incoming MIDI messages*
-
 
 #### I2M.Q.CH
 `I2M.Q.CH`  
@@ -622,12 +866,10 @@ Get currently set MIDI channel / Set MIDI channel `x` (1..16) for MIDI in. Defau
 
 Turn on or off latching for MIDI notes received via MIDI in. `x = 0` means Note Off messages are recorded in the note history, so only notes with keys currently held down on the MIDI controller are stored. `x = 1` means Note Off messages are not recorded in the note history, so notes are still stored after releasing the respective key on the MIDI controller. Default is `x = 1`.  
 
-
 ---
 
 ### MIDI in: Notes
 *Access the note history – the eight last received note numbers and velocities*
-
 
 #### I2M.Q.NOTE
 `I2M.Q.NOTE x`  
@@ -641,24 +883,20 @@ Get `x` (0..7) last note number (0..127) received via MIDI in
 
 Get `x` (0..7) last note velocity (1..127) received via MIDI in  
 
-
 --- 
 
 ### MIDI in: CCs
 *Access the stored data of CC values received via MIDI in*
-
 
 #### I2M.Q.CC
 `I2M.Q.CC x`  
 
 Get current value (0..127) of controller `x` (0..127) received via MIDI in  
 
-
 ---
 
 ### MIDI in: Get latest
 *Get the respective latest value reveived via MIDI in*
-
 
 #### I2M.Q.LCH
 `I2M.Q.LCH`  
@@ -739,11 +977,13 @@ I2M.CC# 3 1 RND 60 120
 ---
 
 
+## Further Reading
+
 ### How scales work on i2c2midi
 
 Scales in i2c2midi do not work like a quantizer where notes "outside" of the scale are forced in place. Instead, i2c2midi will respect "outside" notes and keep their position in respect to the defined scale. This means, you can use a scale for chord transformations and still intentionally define notes in your chord that are not part of that scale.
 
-Let's say, you define chord 1 with notes `0,4,7,8` and set a major scale `0,2,4,5,7,9,11` via chord 2, note `8` of chord 1 will be "outside" the scale – instead of removing this note or forcing it into another note, i2c2midi will store for the nearest note in the scale (`7`) and the respective delta (`+1`). In other words, this note will be treated by i2c2midi as the "5th note in the scale raised by 1 semitone".
+Let's say, you define chord 1 with notes `0,4,7,8` and set a major scale `0,2,4,5,7,9,11` via chord 2, note `8` of chord 1 will be "outside" the scale – instead of removing this note or forcing it into another note, i2c2midi will store the nearest note in the scale (`7`) and the respective delta (`+1`). In other words, this note will be treated by i2c2midi as the "5th note in the scale raised by 1 semitone".
 
 Let's break this down step by step:
 
@@ -782,128 +1022,68 @@ In this example the note not beeing part of the scale is `8`. The nearest note i
    | Transpose = 8  |   | 2+12   | 5+12   | 9+12   | 9+12+1 |   | 14, 17,  21, 22 |
 
 
+---
+
+
+### How curve transformations work
+
+Curve transformations allow you to manipulate the notes of a chord in different ways. Like chord transformations, curve transformations are intentionally designed to encourage experimentation, inviting unexpected and surprising results.
+
+There are two types of curves:
+- **Velocity Curve**: Manipulates the velocity of each note in a chord
+  
+- **Time Curve**: Manipulates the strumming of notes in a chord
+
+Curves are defined by three parameters: A **start value** (%), an **end value** (%), and a **curve type**. 
+Start and end values are percentage values, referring to the respective originally set value (velocity for velocity curve, strumming for time curve).
+The curve type defines the inpolation of values between the defined start and end values. There are different types available:
+  - 1) Linear: Linear from start to end
+  - 2) Exponential: Exponential from start to end
+  - 3) Triangle: Linear from start to end to start
+  - 4) Square: Alternating between start and end
+  - 5) Random: Random values between start and end
+
+Here are some examples :
+
+**Example: Chord with 3 notes**
+Note duration: 1000 ms; Start: 1%; End: 100%
+
+| Curve Type | Value 1 | Value 2 | Value 3 |
+|---|---|---|---|
+| 0) Off | 1000 | 1000 | 1000 |
+| 1) Linear | 10 | 505 | 1000 |
+| 2) Exponential | 10 | 133 | 1000 |
+| 3) Triangle | 10 | 1000 | 10 |
+| 4) Square | 10 | 1000 | 10 |
+| 5) Random | 907 | 393 | 729 |
+ 
+
+**Example: Chord with 4 notes**
+Note duration: 1000 ms; Start: 1%; End: 100%
+
+| Curve Type | Value 1 | Value 2 | Value 3 | Value 4 |
+|---|---|---|---|---|
+| 0) Off | 1000 | 1000 | 1000 | 1000 |
+| 1) Linear | 10 | 340 | 670 | 1000 |
+| 2) Exponential | 10 | 46 | 303 | 1000 |
+| 3) Triangle | 10 | 505 | 1000 | 505 |
+| 4) Alternating | 10 | 1000 | 10 | 1000 |
+| 5) Random | 863 | 47 | 677 | 841 |
+
+**Example: Chord with 8 notes**
+Note duration: 1000 ms; Start: 1%; End: 100%
+
+| Curve Type | Value 1 | Value 2 | Value 3 | Value 4 | Value 5 | Value 6 | Value 7 | Value 8
+|---|---|---|---|---|---|---|---|---|
+| 0) Off | 1000 | 1000 | 1000 | 1000 | 1000 | 1000 | 1000 | 1000 | 
+| 1) Linear | 10 | 151 | 292 | 434 | 575 | 717 | 858 | 1000 | 
+| 2) Exponential | 10 | 12 | 33 | 87 | 194 | 370 | 633 | 1000 | 
+| 3) Triangle | 10 | 257 | 505 | 752 | 1000 | 752 | 505 | 257 | 
+| 4) Alternating | 10 | 1000 | 10 | 1000 | 10 | 1000 | 10 | 1000 | 
+| 5) Random | 468 | 781 | 472 | 34 | 546 | 164 | 301 | 189 |
 
 ---
 
-### Example Scripts
-
-#### Play a random note
-```
-#1 
-I2M.CH 1                // set channel to 1
-I2M.N + 60 RND 24 127   // play note between 60 and 84
-```
-
-#### Define and play a chord
-```
-#1
-I2M.C.CLR 1             // clear chord 1
-I2M.C.ADD 1 0           // add relative note 0
-I2M.C.ADD 1 3           // add relative note 3
-I2M.C.ADD 1 7           // add relative note 7
-
-#2
-I2M.C.STR 1 100         // set strumming to 100
-I2M.C.DIR 1 7           // set play direction to 7: Pingpong
-I2M.C 1 60 127          // play chord 1 with rootnote 60 and velocity 127 (= 60,63,67)
-```
-
-#### Define a chord using reverse binary
-```
-#1
-I2M.C.B 1 R10010001     // define chord: 1 means add, 0 means don't add = 0,3,7
-I2M.C 1 60 127          // play chord 1 with rootnote 60 and velocity 127 (= 60,63,67)
-```
-
-#### Play chords stored in pattern 0
-```
-#1 
-I2M.C.B 1 PN.NEXT 0     // define chord with next value in pattern 0
-I2M.C 1 60 127          // play chord 1 with rootnote 60 and velocity 127
-
-#Pattern 0
-137                     // = R10010001    = 0,3,7
-265                     // = R100100001   = 0,3,8
-1064                    // = R00010100001 = 3,5,10
-1060                    // = R00100100001 = 2,5,10
-```
-
-#### Use chord 2 as scale for a chord 1
-```
-#1
-I2M.C.B 1 R100100011    // define chord 1 = 0,3,7,8 (alternatively use "393")
-I2M.C.B 2 R10110101101  // define chord 2 = 0,2,3,5,7,8,10 (minor scale) (or "1453")
-I2M.C.SC 1 2            // set chord 2 as scale for chord 1
-
-#2
-J WRP + J 1 0 7         // increment J and wrap around 0 and 7
-I2M.C.STR 1 200         // set strumming for chord 1 to 200 ms
-I2M.C.TRP 1 J           // transpose chord 1 by J
-I2M.C 1 60 127          // play chord 1 with rootnote 60 and velocity 127
-```
-
-#### Send transformed chord notes to Just Friends or ER-301 
-
-To Just Friends:
-```
-#I 
-JF.MODE 1
-JF.SHIFT N 0
-
-#1
-I2M.C.B 1 R100100011    // define chord 1 = 0,3,7,8
-I2M.C.B 2 R10110101101  // define chord 2 = 0,2,3,5,7,8,10 (minor scale)
-I2M.C.SC 1 2            // set chord 2 as scale for chord 1
-
-#2
-J WRP + J 1 0 4         // increment J and wrap around 4
-I2M.C.DIS 1 J 2         // distort chord 1 by J at anchor point 2
-I2M.C.VCUR 1 1 40 100   // set a linear (type 1) velocity curve from 40% to 100%
-
-#3
-EV 4: $ 2
-J WRP + J 1 0 3         // increment J and wrap around chord length
-X I2M.C.QN 1 0 J        // get chord note and store in X
-Y I2M.C.QV 1 127 J      // get chord note velocity and store in Y
-Z SCL 0 127 0 800 Y     // scale velocity from 0..127 to 0..800
-JF.NOTE N X VV Z        // play on Just Friends
-```
-
-To ER-301:  
-
-```
-#3
-J WRP + J 1 0 3                 // increment J and wrap around chord length
-SC.CV 1 N I2M.C.QN 1 0 J        // send V/Oct to ER-301
-SC.CV 2 VV I2M.C.QV 1 127 J     // send velocity to ER-301 (set Gain to 7.88)
-SC.TR.P 1                       // send a trigger to ER-301 envelope
-```
-
-#### Query CC 1-4 and store values in Pattern 0
-```
-#1 
-L 0 3: PN 0 I I2M.Q.CC + I 1
-```
-
-#### Query MIDI notes from controller
-
-Arpeggiator that plays MIDI notes currently held down on a connected MIDI controller.  
-CV 1 sends out the V/OCT and CV 2 sends out the velocity. 
-
-```
-#I
-I2M.Q.LATCH 0           // setting to only store currently played MIDI notes
-
-#M
-$ 1
-
-#1
-J WRP + J 1 0 7         // counter from 0..7
-CV 1 N - I2M.Q.N J 48   // query MIDI note number and subtract 4 octaves
-CV 2 VV * 4 I2M.Q.V J   // query MIDI note velocity and scale to VV 0..508
-```
-
----
 
 
 <br/><br/>
@@ -995,19 +1175,19 @@ Ground | → Sleeve | → MIDI Pin 2
 - Unzip the files and open `firmware/i2c2midi_firmware/i2c2midi_firmware.ino` with [Teensyduino](https://www.pjrc.com/teensy/td_download.html).
 - Depending on your hardware, change the following settings:
   - For MKI / Teensy 3.2: 
-    - Set line 36 to `//#define MK2`
-    - Set line 52 to `#define TEENSY3X`
-    - Set line 53 to `//#define TEENSY41 `
+    - Set line 37 to `//#define MK2`
+    - Set line 40 to `#define TEENSY3X`
+    - Set line 41 to `//#define TEENSY41 `
   - For MKII / Teensy 3.6:
-    - Set line 36 to `#define MK2`   
-    - Set line 52 to `#define TEENSY3X`
-    - Set line 53 to `//#define TEENSY41 `
+    - Set line 37 to `#define MK2`   
+    - Set line 40 to `#define TEENSY3X`
+    - Set line 41 to `//#define TEENSY41 `
   - For MKII / Teensy 4.1:
-    - Set line 36 to `#define MK2`   
-    - Set line 52 to `//#define TEENSY3X`
-    - Set line 53 to `#define TEENSY41 `
+    - Set line 37 to `#define MK2`   
+    - Set line 40 to `//#define TEENSY3X`
+    - Set line 41 to `#define TEENSY41 `
 - Make sure to install all necessary libraries (see list of libraries below). [More info on how to install libraries](https://docs.arduino.cc/software/ide-v1/tutorials/installing-libraries).
-- Connect the Teensy to your computer with a USB cable. Caution: Don't connect the module to Euro power and USB at the same time!
+- Connect the Teensy to your computer with a USB cable. Caution: Don't connect the module to Euro power and USB at the same time! (Unless you have [cut the "5V pad"](https://github.com/attowatt/i2c2midi/blob/main/hardware/hardware-MK2/BUILD-GUIDE.md#iii) during your build)
 - Under `Tools`:
   - set `Board` to `Teensy 3.2`, `Teensy 3.6` or `Teensy 4.1`
   - set `USB Type` to `Serial`
@@ -1018,15 +1198,20 @@ Ground | → Sleeve | → MIDI Pin 2
 
 ### Changelog
 
+- Version 5.0.1
+  - Bugfix for Teensyduino 1.58  
+- Version 5.0.0 (works with Teletype Firmware `5.0.0 BETA 1` [Link](https://llllllll.co/t/teletype-5-0-0-beta-testing/62210))
+  - New OP `I2M.MUTE` / `I2M.MUTE#`: Get/Set mute state of MIDI channel
+  - New OP `I2M.SOLO` / `I2M.SOLO#`: Get/Set solo state of MIDI channel
 - Version 4.4.1 (+ Teletype Firmware `I2M BETA 3.1`)
   - Bugfix: Chord 1 could not be set as a scale
-- Version 4.4 (+ Teletype Firmware `I2M BETA 3.1`)
+- Version 4.4.0 (+ Teletype Firmware `I2M BETA 3.1`)
   - New OP `I2M.C.QN`: Get the transformed chord note at index 
   - New OP `I2M.C.QV`: Get the transformed chord note velocity at index  
-- Version 4.3 (+ Teletype Firmware `I2M BETA 3`)
+- Version 4.3.0 (+ Teletype Firmware `I2M BETA 3`)
   - New looping MIDI buffer / MIDI recorder feature, with new OPs: `I2M.B.R`, `I2M.B.L`, `I2M.B.START`, `I2M.B.END`, `I2M.B.DIR`, `I2M.B.SPE`, `I2M.B.FB`, `I2M.B.NSHIFT`, `I2M.B.VSHIFT`, `I2M.B.TSHIFT`, `I2M.B.NOFF`, `I2M.B.VOFF`, `I2M.B.TOFF`, `I2M.B.CLR`, `I2M.B.MODE`  
   - New OP `I2M.C.DIR`: Set a play direction for a chord
-- Version 4.2 (+ Teletype Firmware `I2M BETA 2`)
+- Version 4.2.0 (+ Teletype Firmware `I2M BETA 2`)
   - New channel-specific OP variants for most of the existing OPs
   - New OP `I2M.NT`: Send a note with specific duration
   - New OP `I2M.C.B`: Define chord using reverse binary notation (`R...`)
@@ -1042,15 +1227,15 @@ Ground | → Sleeve | → MIDI Pin 2
   - _BREAKING_: New modes for `I2M.MIN` and `I2M.MAX`: Ignore notes, clamp notes, fold back notes by one octave, fold back notes by multiple octaves
   - _BREAKING_: Removed getter OPs for `I2M.MIN`, `I2M.MAX`, `I2M.C.ROT`, `I2M.C.INV`, `I2M.C.STR` because OPs have multiple parameters
   - _BREAKING_: Removed `I2M.NC`, `I2M.NOC`, `I2M.CCC`, `I2M.CCVC`; replaced by channel-specific OP variants
-- Version 4.1
+- Version 4.1.0
   - Experimental support for Teensy 4.1
-- Version 4.0 (+ Teletype Firmware `I2M BETA 1`) ([more info](https://llllllll.co/t/i2c2midi-a-diy-module-that-translates-i2c-to-midi/40950/229))
+- Version 4.0.0 (+ Teletype Firmware `I2M BETA 1`) ([more info](https://llllllll.co/t/i2c2midi-a-diy-module-that-translates-i2c-to-midi/40950/229))
   - Completely rewritten firmware with support for i2c2midi's dedicated Teletype OPs (`I2M`).
   - Updated README.
-- Version 3.1 
+- Version 3.1.0
   - Added feature flag to use i2c2midi as USB device, using the Teensy Micro USB jack.
   - Fixed a bug where unknown I2C request messages would freeze the I2C bus.
-- Version 3.0 (MKII)
+- Version 3.0.0 (MKII)
   - Firmware for i2c2midi hardware MKII, adding USB Host functionality.
 
 
@@ -1075,6 +1260,12 @@ Ground | → Sleeve | → MIDI Pin 2
   
 <br/><br/>
 
+## crow Library
+
+@mreid created a great library that connects i2c2midi to monome crow:  
+https://github.com/mreid/crow-i2c2midi
+
+<br/><br/>
 
 ## Thanks
 A huge *Thank You* to the legendary [scanner-darkly](https://github.com/scanner-darkly) who not only implemented i2c2midi's Teletype OPs, but also joined forces with me in designing the feature set and OP concept for MKII.

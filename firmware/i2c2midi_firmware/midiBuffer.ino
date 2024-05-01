@@ -37,16 +37,12 @@ void checkBuffer() {
       fixedOffset2 = bufferSpeed / 100.;
     }
   }
-
-  #ifdef DEBUG
-    int lastPosition = bufferFrame;
-  #endif
   
-  if (bufferElapsedMicros >= bufferSpeed * 10) {            // default bufferSpeed of 100 * 10 = 1000, so 1 bufferframe per millisecond
-    
+  if (bufferElapsedMicros >= static_cast<long unsigned int>(bufferSpeed * 10)) {  // default bufferSpeed of 100 * 10 = 1000, so 1 bufferframe per millisecond
+  
     if (!bufferReverse) {
       bufferFrame += 1;  
-      if (bufferFrame >= bufferLength - bufferEndOffset) {  // when reaching the end of the buffer...
+      if (bufferFrame >= static_cast<long unsigned int>(bufferLength - bufferEndOffset)) {  // when reaching the end of the buffer...
         if (bufferDirection == 2) {                         // ...if direction 2 = ping pong: reverse the direction
           reverseBuffer(1);                                 
         } else {
@@ -58,7 +54,7 @@ void checkBuffer() {
     } 
     else {
       bufferFrame -= 1;
-      if (bufferFrame <= 0 + bufferStartOffset) {           // when reaching the start of the buffer...
+      if (bufferFrame <= static_cast<long unsigned int>(0 + bufferStartOffset)) {           // when reaching the start of the buffer...
         if (bufferDirection == 2) {                         // ...if direction 2 = ping pong: re-reverse the direction
           reverseBuffer(0);                                 
         } else {
@@ -70,13 +66,6 @@ void checkBuffer() {
     } 
   bufferElapsedMicros = bufferElapsedMicros - bufferSpeed * 10;  // reset the timer
   }
-
-  #ifdef DEBUG
-    if (bufferFrame != lastPosition) {    
-      Serial.print(bufferRoundCount); Serial.print(" : ");
-      Serial.println(bufferFrame);
-    }
-  #endif
 
   for (int i = 0; i < maxBuffer; i++) {                     // go through the MIDI buffer
     if (buffer[i][2]) {                                     // check if there is a note to be played
